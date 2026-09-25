@@ -56,22 +56,37 @@ class ArcFace:
 
 def main():
     from .align import align_face
+    from .landmarks import draw_face
     from .workflow import camera, exiting, models, parser, read_frame
+    import time
+    
     args = parser("Preview ArcFace embedding shape and L2 norm").parse_args()
     detector, embedder = models(args)
     window = "FaceX embedding"
+    
     with camera(args.camera) as cap:
         while True:
+            start = time.perf_counter()
             frame = read_frame(cap)
             faces = detector.detect(frame)
             message = "Show exactly one face"
+            
+            # Draw all detected faces
+            for face in faces:
+                draw_face(frame, face)
+            
             if len(faces) == 1:
                 aligned = align_face(frame, faces[0].points)
                 vector = embedder.embed(aligned)
                 message = f"Embedding: {vector.size} | L2 norm: {np.linalg.norm(vector):.4f}"
                 cv2.imshow("Aligned face", aligned)
+            
+            fps = 1 / max(time.perf_counter() - start, 1e-6)
             cv2.putText(frame, message, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            cv2.putText(frame, f"FaceX | {fps:.1f} FPS | Q: quit", (10, 50),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             cv2.imshow(window, frame)
+            
             if exiting(window, cv2.waitKey(1) & 0xff):
                 break
 

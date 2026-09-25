@@ -55,7 +55,33 @@ def draw_face(frame, face, label="", color=(0, 220, 0)):
                     font, scale, (240, 243, 246), 1, cv2.LINE_AA)
 
 
+def main():
+    from .workflow import camera, exiting, parser, read_frame
+    import time
+    
+    args = parser("Preview YuNet face detection with 5-point landmarks").parse_args()
+    detector = FaceDetector(args.detector)
+    window = "FaceX landmarks"
+    print("Face detection running. Show your face to camera. Q: quit")
+    
+    with camera(args.camera) as cap:
+        while True:
+            start = time.perf_counter()
+            frame = read_frame(cap)
+            faces = detector.detect(frame)
+            
+            for face in faces:
+                draw_face(frame, face)
+            
+            fps = 1 / max(time.perf_counter() - start, 1e-6)
+            cv2.putText(frame, f"FaceX | {fps:.1f} FPS | Q: quit", (10, 25),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            cv2.imshow(window, frame)
+            
+            if exiting(window, cv2.waitKey(1) & 0xff):
+                break
+
+
 if __name__ == "__main__":
-    from .harr_5pt import main
     from .workflow import run
     run(main)
