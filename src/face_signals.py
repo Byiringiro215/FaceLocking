@@ -79,8 +79,28 @@ class FaceSignalExtractor:
             import mediapipe as mp
         except ImportError as error:
             raise RuntimeError('Face signals require MediaPipe. Run python -m pip install -r requirements.txt') from error
-        if not hasattr(mp, 'solutions'):
-            raise RuntimeError('Face signals require mediapipe==0.10.21; install requirements.txt')
+        
+        # Try real MediaPipe first, fall back to compatibility layer
+        try:
+            from mediapipe.python.solutions import face_mesh as mp_face_mesh
+            print("[FaceSignalExtractor] Using real MediaPipe")
+            self.mesh = mp_face_mesh.FaceMesh(
+                static_image_mode=False,
+                max_num_faces=1,
+                refine_landmarks=True,
+                min_detection_confidence=0.5,
+                min_tracking_confidence=0.5,
+            )
+        except (ImportError, AttributeError, ModuleNotFoundError):
+            # Fallback to compatibility layer
+            print("[FaceSignalExtractor] MediaPipe broken, using compatibility layer")
+            from .mediapipe_compat import get_compatible_face_mesh
+            self.mesh = get_compatible_face_mesh(
+                static_image_mode=False,
+                max_num_faces=1,
+                min_detection_confidence=0.5,
+                min_tracking_confidence=0.5,
+            )
         self.ear_threshold = ear_threshold
 
         self.blink_min_frames = blink_min_frames
@@ -93,14 +113,6 @@ class FaceSignalExtractor:
 
         self.low_ear_frames = 0
         self.smiling = False
-
-        self.mesh = mp.solutions.face_mesh.FaceMesh(
-            static_image_mode=False,
-            max_num_faces=1,
-            refine_landmarks=True,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5,
-        )
 
     def reset(self) -> None:
         """
