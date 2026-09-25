@@ -244,3 +244,5 @@ Development validation: all 10 tests passed with Python 3.12.10, NumPy 2.5.3, Op
 This project follows the modular enrollment/alignment/embedding/recognition architecture in Gabriel Baziramwabo's *Face Recognition with ArcFace ONNX and 5-Point Alignment*, supplied with this project. The implementation uses YuNet for measured landmarks, one JSON database, and held-out image evaluation; its commands and data format differ from the book's Haar/MediaPipe and NPZ examples. The existing `camera.py` and `detect.py` demos are preserved.
 
 This is an educational recognition application with no liveness or anti-spoofing check. Enroll people with their consent and protect the local biometric database; it is not encrypted. Do not use a webcam match alone as an access-control decision. `.gitignore` covers new databases, images, and model downloads, but files already tracked by Git remain tracked: the original database and ArcFace placeholder are tracked in this repository, so inspect staged changes before committing real biometric data or large weights.
+#   f a c e - l o c k i n g - v 2  
+ 
