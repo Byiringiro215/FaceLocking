@@ -272,36 +272,124 @@ def tracking_session(args, cli, log):
     window = 'FaceX identity lock'
     print(f'Tracking {args.target!r}. Q or Escape quits. Scores use Part 1 cosine matching.')
     blink_total = 0
-    with closing(FaceSignalExtractor(
+    
+    # Try to use FaceSignalExtractor, fall back to direct eye detection if needed
+    try:
+        extractor = FaceSignalExtractor(
             ear_threshold=args.ear_threshold, blink_min_frames=args.blink_min_frames,
             blink_max_frames=args.blink_max_frames, closed_frames=args.closed_frames,
-            smile_on=args.smile_on, smile_off=args.smile_off)) as extractor, camera(args.camera) as cap:
-        while True:
-            frame = read_frame(cap)
-            face, position = tracker.update(frame)
-            face_state = None
-            if face is not None:
-                face_state = extractor.analyze(frame, tracker.box(face))
-                if face_state is not None and face_state.blink:
-                    blink_total += 1
-            else:
-                extractor.reset()
-            log.frame(tracker, position, face_state, blink_total, args.ear_threshold)
-            # All inference uses the original pixels before overlays are drawn.
-            color = (0, 200, 0) if tracker.state == LockState.LOCKED else (0, 140, 255)
-            if face is not None:
-                draw_face(frame, face, f'{args.target} | {tracker.state.name}', color)
-                cx, cy = np.rint(tracker.smooth_center).astype(int)
-                cv2.circle(frame, (cx, cy), 6, (28, 32, 38), -1, cv2.LINE_AA)
-                cv2.circle(frame, (cx, cy), 4, (255, 170, 0), -1, cv2.LINE_AA)
-            height, width = frame.shape[:2]
-            dz = tracker.dead_zone
-            cv2.rectangle(frame, (int(width * (0.5 - dz / 2)), int(height * (0.5 - dz / 2))),
-                          (int(width * (0.5 + dz / 2)), int(height * (0.5 + dz / 2))),
-                          (160, 160, 160), 1, cv2.LINE_AA)
-            cv2.imshow(window, status_panel(frame, tracker, position, face_state, blink_total, args))
-            if exiting(window, cv2.waitKey(1) & 0xff):
-                break
+            smile_on=args.smile_on, smile_off=args.smile_off)
+        use_signal_extractor = True
+    except Exception as e:
+        print(f"[Warning] FaceSignalExtractor failed ({e}), using fallback eye detector")
+        from .eye_detector import EyeBlinkDetector
+        extractor = EyeBlinkDetector(
+            ear_threshold=args.ear_threshold,
+            blink_min_frames=args.blink_min_frames,
+            blink_max_frames=args.blink_max_frames)
+        use_signal_extractor = False
+    
+    try:
+        with closing(extractor), camera(args.camera) as cap:
+            while True:
+                frame = read_frame(cap)
+                face, position = tracker.update(frame)
+                face_state = None
+                
+                if face is not None:
+                    if use_signal_extractor:
+                        face_state = extractor.analyze(frame, tracker.box(face))
+                    else:
+                        # Use fallback eye detector
+                        eye_result = extractor.detect_blink(frame, face.box)
+                        if eye_result:
+                            # Create a mock FaceSignals-like object
+                            class MockSignals:
+                                def __init__(self, data):
+                                    self.ear = data.get('ear', 0)
+                                    self.blink = data.get('blink', False)
+                                    self.eyes_closed = data.get('eyes_closed', False)
+                                    self.smile_score = 0.35
+                                    self.smiling = False
+                            face_state = MockSignals(eye_result)
+                    
+                    if face_state is not None and face_state.blink:
+                        blink_total += 1
+                else:
+                    if use_signal_extractor:
+                        extractor.reset()
+                
+                log.frame(tracker, position, face_state, blink_total, args.ear_threshold)
+                
+                # Display expression info on main frame
+                if face_state is not None:
+                    y_offset = 150
+                    # EAR indicator
+                    ear_text = f"EAR: {face_state.ear:.3f}"
+                    ear_color = (0, 255, 0) if face_state.ear >= args.ear_threshold else (0, 0, 255)
+                    cv2.putText(frame, ear_text, (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.7, ear_color, 2)
+                    
+                    # Eye state
+                    if face_state.eyes_closed:
+                        eye_text = "EYES CLOSED"
+                        eye_color = (0, 0, 255)
+                    elif face_state.ear < args.ear_threshold:
+                        eye_text = "EYES CLOSING"
+                        eye_color = (0, 165, 255)
+                    else:
+                        eye_text = "EYES OPEN"
+                        eye_color = (0, 255, 0)
+                    cv2.putText(frame, eye_text, (10, y_offset + 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, eye_color, 2)
+                    
+                    # Blink indicator
+                    if face_state.blink:
+                        cv2.putText(frame, "BLINK DETECTED!", (10, y_offset + 80), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 255), 3)
+                    
+                    # Smile status
+                    smile_text = f"Smile: {face_state.smile_score:.2f} {'SMILING' if face_state.smiling else 'NEUTRAL'}"
+                    smile_color = (255, 0, 0) if face_state.smiling else (200, 200, 200)
+                    cv2.putText(frame, smile_text, (10, y_offset + 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, smile_color, 2)
+                    
+                    # Blink counter
+                    cv2.putText(frame, f"Blinks: {blink_total}", (10, y_offset + 160), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 200, 0), 2)
+                
+                # Visual warnings based on tracking state
+                if tracker.state == LockState.LOST:
+                    # Red box - face missing
+                    height, width = frame.shape[:2]
+                    cv2.putText(frame, "FACE MISSING - SEARCHING", (10, 50),
+                               cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+                    # Large red warning border
+                    cv2.rectangle(frame, (0, 0), (width-1, height-1), (0, 0, 255), 8)
+                    cv2.putText(frame, f"Lost for {tracker.lost_frames}/{tracker.lost_timeout} frames", 
+                               (10, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                elif tracker.state == LockState.UNCERTAIN:
+                    # Orange box - brief identity uncertainty
+                    height, width = frame.shape[:2]
+                    cv2.putText(frame, f"UNCERTAIN ({tracker.uncertain_frames}/{tracker.uncertain_grace})", 
+                               (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 165, 255), 2)
+                    # Orange warning border
+                    cv2.rectangle(frame, (0, 0), (width-1, height-1), (0, 165, 255), 5)
+                
+                color = (0, 200, 0) if tracker.state == LockState.LOCKED else (0, 140, 255)
+                if face is not None:
+                    draw_face(frame, face, f'{args.target} | {tracker.state.name}', color)
+                    cx, cy = np.rint(tracker.smooth_center).astype(int)
+                    cv2.circle(frame, (cx, cy), 6, (28, 32, 38), -1, cv2.LINE_AA)
+                    cv2.circle(frame, (cx, cy), 4, (255, 170, 0), -1, cv2.LINE_AA)
+                height, width = frame.shape[:2]
+                dz = tracker.dead_zone
+                cv2.rectangle(frame, (int(width * (0.5 - dz / 2)), int(height * (0.5 - dz / 2))),
+                              (int(width * (0.5 + dz / 2)), int(height * (0.5 + dz / 2))),
+                              (160, 160, 160), 1, cv2.LINE_AA)
+                cv2.imshow(window, status_panel(frame, tracker, position, face_state, blink_total, args))
+                if exiting(window, cv2.waitKey(1) & 0xff):
+                    break
+    finally:
+        if use_signal_extractor:
+            extractor.close()
 
 
 if __name__ == '__main__':
